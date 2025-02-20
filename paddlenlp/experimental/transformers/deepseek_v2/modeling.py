@@ -50,7 +50,17 @@ from paddlenlp.transformers.model_utils import (
 )
 from paddlenlp.utils.log import logger
 
-__all__ = ["DeepseekV2ForCausalLMBlockInferenceModel"]
+__all__ = ["DeepseekV2ForCausalLMBlockInferenceModel", "DeepseekV2ForCausalLMInferenceModel"]
+
+import paddlenlp_ops
+def fake_weight_quantize(*args, **kw):
+    
+    # #print(*args)
+    weight = args[0]
+    weight = weight.transpose([1,0])
+    output, scale = paddlenlp_ops.weight_quantize_xpu(weight, **kw,arch = -1,group_size = -1)
+    return output, scale.cast(dtype='float16')
+weight_quantize = fake_weight_quantize
 
 
 class DeepseekScalingRotaryEmbedding(nn.Layer):
@@ -74,6 +84,8 @@ class DeepseekScalingRotaryEmbedding(nn.Layer):
         mscale_all_dim: float = 0,
     ) -> None:
         super().__init__()
+        ori_device = paddle.device.get_device()
+        paddle.device.set_device("cpu")
         self._dtype = paddle.get_default_dtype()
 
         self.rotary_dim = rotary_dim
@@ -98,6 +110,7 @@ class DeepseekScalingRotaryEmbedding(nn.Layer):
         self.register_buffer("cos_cache", cos_cache, persistable=True)
         self.sin_cache: paddle.Tensor
         self.register_buffer("sin_cache", sin_cache, persistable=True)
+        paddle.device.set_device(ori_device)
 
     def _compute_inv_freq(self, scaling_factor: float) -> paddle.Tensor:
         pos_freqs = self.base ** (paddle.arange(0, self.rotary_dim, 2, dtype=paddle.float32) / self.rotary_dim)
@@ -1112,6 +1125,8 @@ class DeepseekV2ForCausalLMBlockInferenceModel(GenerationBlockInferenceModel, De
             )
         self.deepseek_v2.set_state_dict({k: state_dict[k] for k in state_dict.keys()})
 
+
+DeepseekV2ForCausalLMInferenceModel = DeepseekV2ForCausalLMBlockInferenceModel
 
 class MTPDeepseekV2ForCausalLMBlockInferenceModel(DeepseekV2ForCausalLMBlockInferenceModel):
     def __init__(self, config, base_model_prefix):
