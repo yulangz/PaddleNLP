@@ -114,7 +114,7 @@ static int xpu2or3_wrapper(Context* ctx,
                         int length,
                         int length_input_ids) {
   using XPU_INT64 = typename XPUIndexType<int64_t>::type;
-
+  bool is_xpu2 = ctx->dev().type() == api::kXPU2;
   auto set_value_by_flags_and_idx_kernel = 
     is_xpu2 ? xpu2::plugin::set_value_by_flags_and_idx : xpu3::plugin::set_value_by_flags_and_idx;
   set_value_by_flags_and_idx_kernel<<<ctx->ncluster(), 64, ctx->xpu_stream>>>(
