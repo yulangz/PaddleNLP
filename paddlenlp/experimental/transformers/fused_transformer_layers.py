@@ -4062,7 +4062,7 @@ class FusedMultiTransformerXPU(Layer):
             )[0]
             # TODO: 不能这样改，不然非吸收版没法用了
             query_pe, key_pe = self.config.rotary_emb(
-                self.position_ids[0 : kwargs.get("seq_lens_encoder", None).sum()], query_pe, key_pe
+                self.position_ids, query_pe, key_pe
             )
 
             if self.config.mla_config.use_absorb():
@@ -4148,10 +4148,12 @@ class FusedMultiTransformerXPU(Layer):
         ln_out = qkv_out
         latent_cache = caches[i]
         out_linear_out = paddle.zeros(shape=[ln_out.shape[0], ln_out.shape[1]], dtype=ln_out.dtype)
-        encoder_len = kwargs.get("seq_lens_encoder", None).sum()
+        # encoder_len = kwargs.get("seq_lens_encoder", None).sum()
 
         if kwargs["max_enc_len_this_time"] > 0:  # prefill phase
-            ln_out_encoder = ln_out[0:encoder_len, :]
+            # ln_out_encoder = ln_out[0:encoder_len, :]
+            # import pdb; pdb.set_trace()
+            ln_out_encoder = ln_out
             query, key, value = self.compute_qkv_linear(ln_out_encoder, i, latent_cache=latent_cache, **kwargs)
 
             from paddlenlp_ops import absorb_mla_block_mha_encoder_xpu
@@ -4180,6 +4182,7 @@ class FusedMultiTransformerXPU(Layer):
                 kwargs.get("max_enc_len_this_time", None),
                 kwargs.get("max_dec_len_this_time", None),
                 kwargs.get("max_len_kv", None),
+                kwargs["total_enc_len"],
                 None,  # rotary_embs,
                 None,  # attn_mask
                 None,  # qkv_bias
@@ -4207,11 +4210,14 @@ class FusedMultiTransformerXPU(Layer):
                 False,  # causal
                 False,  # speculate_decoder
             )
+            # import pdb; pdb.set_trace()
             # out_linear_out_prefill = self.compute_out_linear(fmha_out_prefill, i)
-            out_linear_out_prefill = paddle.matmul(fmha_out_prefill, self.linear_weights[i])
-            out_linear_out[0:encoder_len, :] = out_linear_out_prefill
+            out_linear_out_prefill = paddle.matmul(fmha_out_prefill.reshape([fmha_out_prefill.shape[0], -1]), self.linear_weights[i])
+            out_linear_out = out_linear_out + out_linear_out_prefill
+            # out_linear_out[0:encoder_len, :] = out_linear_out_prefill
         if kwargs["max_dec_len_this_time"]:  # decode phase
-            ln_out_decoder = ln_out[encoder_len:, :]
+            # ln_out_decoder = ln_out[encoder_len:, :]
+            ln_out_decoder = ln_out
 
             compressed_kv = paddle.matmul(ln_out_decoder, self.kv_a_proj_with_mqa_weights[i])
             compressed_kv, key_pe = compressed_kv.split(
@@ -4254,7 +4260,7 @@ class FusedMultiTransformerXPU(Layer):
             )
 
             query_pe, key_pe = self.config.rotary_emb(
-                self.position_ids[kwargs.get("seq_lens_encoder", None).sum() :], query_pe, key_pe
+                self.position_ids, query_pe, key_pe
             )
 
             decode_mla_write_cache_xpu(
@@ -4272,6 +4278,7 @@ class FusedMultiTransformerXPU(Layer):
                 kwargs.get("padding_offsets", None),
                 kwargs.get("cum_offsets", None),
                 kwargs.get("block_tables", None),
+                kwargs["total_enc_len"],
                 "none",
                 kwargs.get("max_input_length", -1),
                 self.kv_num_heads,
@@ -4308,6 +4315,7 @@ class FusedMultiTransformerXPU(Layer):
                 kwargs.get("max_enc_len_this_time", None),
                 kwargs.get("max_dec_len_this_time", None),
                 kwargs.get("max_len_kv", None),
+                kwargs["total_enc_len"],
                 None,  # rotary_embs,
                 None,  # attn_mask
                 None,  # qkv_bias
@@ -4349,7 +4357,7 @@ class FusedMultiTransformerXPU(Layer):
             out_linear_out_decode = paddle.matmul(fmha_out_decode, self.linear_weights[i])
             # --
 
-            out_linear_out[encoder_len:, :] = out_linear_out_decode
+            out_linear_out = out_linear_out + out_linear_out_decode
         return out_linear_out
 
     def compute_activation(self, ffn1_out, i):

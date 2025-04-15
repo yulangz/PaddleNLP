@@ -60,6 +60,7 @@ std::vector<paddle::Tensor> MlaEnAttn(
     const paddle::Tensor& max_enc_len_this_time,
     const paddle::Tensor& max_dec_len_this_time,
     const paddle::Tensor& max_len_kv,
+    const paddle::Tensor& total_enc_len,
     const paddle::optional<paddle::Tensor>& rotary_embs,
     const paddle::optional<paddle::Tensor>& attn_mask,
     const paddle::optional<paddle::Tensor>& qkv_bias,
@@ -101,28 +102,31 @@ std::vector<paddle::Tensor> MlaEnAttn(
   const int max_block_per_seq = block_tables.dims()[1];
   const int max_seq_len = block_size * max_block_per_seq;
   int enc_batch = enc_batch_tensor.data<int32_t>()[0]; 
+
+  const auto enc_len = total_enc_len.data<int32_t>()[0];
+
   // 初始化输入：q k v
   auto q_xft = baidu::xpu::xft::xftTensor<QType, 3>(
       reinterpret_cast<QType*>(const_cast<paddle::bfloat16*>(q.data<qdata_t>())),
-      std::array<int64_t, 3>{q.shape()[0],
+      std::array<int64_t, 3>{enc_len,
                              q.shape()[1],
                              q.shape()[2]});
   auto k_xft = baidu::xpu::xft::xftTensor<QType, 3>(
       reinterpret_cast<QType*>(const_cast<paddle::bfloat16*>(k.data<qdata_t>())),
-      std::array<int64_t, 3>{k.shape()[0],
+      std::array<int64_t, 3>{enc_len,
                              k.shape()[1],
                              k.shape()[2]});
   auto v_xft = baidu::xpu::xft::xftTensor<QType, 3>(
       reinterpret_cast<QType*>(const_cast<paddle::bfloat16*>(v.data<qdata_t>())),
-      std::array<int64_t, 3>{v.shape()[0],
+      std::array<int64_t, 3>{enc_len,
                              v.shape()[1],
                              v.shape()[2]});       
                                                    
   // 初始化输出tensor
-  auto fmha_out = paddle::full({q.shape()[0], num_head * dim_v}, -2, q.type(), q.place()); 
+  auto fmha_out = paddle::full({q.shape()[0], num_head * dim_v}, 0, q.type(), q.place()); 
   auto fmha_out_xft = baidu::xpu::xft::xftTensor<QType, 2>(
       reinterpret_cast<QType*>(const_cast<paddle::bfloat16*>(fmha_out.data<qdata_t>())),
-      std::array<int64_t, 2>{fmha_out.shape()[0],
+      std::array<int64_t, 2>{enc_len,
                              fmha_out.shape()[1]});
 
   // encoder
@@ -234,6 +238,7 @@ std::vector<std::vector<int64_t>> MlaEnAttnInferShape(
     const std::vector<int64_t>& max_enc_len_this_time_shape,
     const std::vector<int64_t>& max_dec_len_this_time_shape,
     const std::vector<int64_t>& max_len_kv_shape,
+    const std::vector<int64_t>& total_enc_len_shape,
     const paddle::optional<std::vector<int64_t>>& rotary_embs_shape,
     const paddle::optional<std::vector<int64_t>>& attn_mask_shape,
     const paddle::optional<std::vector<int64_t>>& qkv_bias_shape,
@@ -274,6 +279,7 @@ std::vector<paddle::DataType> MlaEnAttnInferDtype(
     const paddle::DataType& max_enc_len_this_time_dtype,
     const paddle::DataType& max_dec_len_this_time_dtype,
     const paddle::DataType& max_len_kv_dtype,
+    const paddle::DataType& total_enc_len_dtype,
     const paddle::optional<paddle::DataType>& rotary_embs_dtype,
     const paddle::optional<paddle::DataType>& attn_mask_dtype,
     const paddle::optional<paddle::DataType>& qkv_bias_dtype,
@@ -334,6 +340,7 @@ PD_BUILD_OP(absorb_mla_block_mha_encoder_xpu)
              "max_enc_len_this_time",
              "max_dec_len_this_time",
              "max_len_kv",
+             "total_enc_len",
              paddle::Optional("rotary_embs"),
              paddle::Optional("attn_mask"),
              paddle::Optional("qkv_bias"),

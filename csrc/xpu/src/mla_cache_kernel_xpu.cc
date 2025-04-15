@@ -227,6 +227,7 @@ std::vector<paddle::Tensor> DecodeMLAWriteCache(
                     const paddle::Tensor& padding_offsets,
                     const paddle::Tensor& cum_offsets,
                     const paddle::Tensor& block_tables,
+                    const paddle::Tensor& total_enc_len,
                     const int max_seq_len,
                     const int kv_num_heads,
                     const bool speculate_decoder,
@@ -252,14 +253,17 @@ std::vector<paddle::Tensor> DecodeMLAWriteCache(
   int enc_batch = enc_batch_tensor.data<int32_t>()[0];
   int dec_batch = dec_batch_tensor.data<int32_t>()[0];
 
+  const auto enc_len = total_enc_len.data<int32_t>()[0];
+  const auto num_decode = num_tokens - enc_len;
+
   // 初始化输入
   auto kv_nope_xft = baidu::xpu::xft::xftTensor<DataType_, 2>(
-      reinterpret_cast<DataType_*>(const_cast<data_t*>(kv_nope.data<data_t>())),
-      std::array<int64_t, 2>{num_tokens,
+      reinterpret_cast<DataType_*>(const_cast<data_t*>(kv_nope.data<data_t>() + enc_len * kv_lora_rank)),
+      std::array<int64_t, 2>{num_decode,
                              kv_lora_rank});
   auto kv_pe_xft = baidu::xpu::xft::xftTensor<DataType_, 2>(
-      reinterpret_cast<DataType_*>(const_cast<data_t*>(kv_pe.data<data_t>())),
-      std::array<int64_t, 2>{num_tokens,
+      reinterpret_cast<DataType_*>(const_cast<data_t*>(kv_pe.data<data_t>() + enc_len * rope_head_dim)),
+      std::array<int64_t, 2>{num_decode,
                              rope_head_dim});
   // 初始化输入 cache
   auto cache_xft = baidu::xpu::xft::xftTensor<DataType_, 4>(
@@ -278,7 +282,7 @@ std::vector<paddle::Tensor> DecodeMLAWriteCache(
   std::vector<const DataType_*> concat_input;
   concat_input.push_back(kv_nope_xft.data());
   concat_input.push_back(kv_pe_xft.data());
-  auto concat_out = paddle::full({num_tokens, kv_lora_rank + rope_head_dim}, -2, kv_nope.type(), kv_nope.place()); 
+  auto concat_out = paddle::full({num_decode, kv_lora_rank + rope_head_dim}, 0, kv_nope.type(), kv_nope.place()); 
   auto concat_out_xft = baidu::xpu::xft::xftTensor<DataType_, 2>(
       reinterpret_cast<DataType_*>(const_cast<data_t*>(concat_out.data<data_t>())),
       std::array<int64_t, 2>{concat_out.shape()[0],
@@ -288,7 +292,7 @@ std::vector<paddle::Tensor> DecodeMLAWriteCache(
   baidu::xpu::api::concat<DataType_>(xpu_ctx->x_context(),
                                       concat_input,
                                       concat_out_xft.data(),
-                                      {{num_tokens, kv_lora_rank},{num_tokens, rope_head_dim}},
+                                      {{num_decode, kv_lora_rank},{num_decode, rope_head_dim}},
                                       1);
 
 
@@ -369,6 +373,7 @@ std::vector<paddle::Tensor> DecodeMLAWriteCacheKernel(
     const paddle::Tensor& padding_offsets,
     const paddle::Tensor& cum_offsets,
     const paddle::Tensor& block_tables,
+    const paddle::Tensor& total_enc_len,
     const std::string& cache_quant_type_str,
     const int max_seq_len,
     const int kv_num_heads,
@@ -389,6 +394,7 @@ std::vector<paddle::Tensor> DecodeMLAWriteCacheKernel(
                               padding_offsets,
                               cum_offsets,
                               block_tables,
+                              total_enc_len,
                               max_seq_len,
                               kv_num_heads,
                               speculate_decoder,
@@ -409,6 +415,7 @@ std::vector<paddle::Tensor> DecodeMLAWriteCacheKernel(
                               padding_offsets,
                               cum_offsets,
                               block_tables,
+                              total_enc_len,
                               max_seq_len,
                               kv_num_heads,
                               speculate_decoder,
@@ -455,7 +462,8 @@ PD_BUILD_OP(decode_mla_write_cache_xpu)
              "dec_batch_tensor",
              "padding_offsets",
              "cum_offsets",
-             "block_tables"})
+             "block_tables",
+             "total_enc_len"})
     .Outputs({"kv_cache_out"})
     .SetInplaceMap({{"kv_cache", "kv_cache_out"}})
     .Attrs({"cache_quant_type_str: std::string",
