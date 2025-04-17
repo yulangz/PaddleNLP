@@ -4150,7 +4150,8 @@ class FusedMultiTransformerXPU(Layer):
         out_linear_out = paddle.zeros(shape=[ln_out.shape[0], ln_out.shape[1]], dtype=ln_out.dtype)
         # encoder_len = kwargs.get("seq_lens_encoder", None).sum()
 
-        if kwargs["max_enc_len_this_time"] > 0:  # prefill phase
+        # if kwargs["max_enc_len_this_time"] > 0:  # prefill phase
+        if self.has_encoder:
             # ln_out_encoder = ln_out[0:encoder_len, :]
             # import pdb; pdb.set_trace()
             ln_out_encoder = ln_out
@@ -4215,7 +4216,8 @@ class FusedMultiTransformerXPU(Layer):
             out_linear_out_prefill = paddle.matmul(fmha_out_prefill.reshape([fmha_out_prefill.shape[0], -1]), self.linear_weights[i])
             out_linear_out = out_linear_out + out_linear_out_prefill
             # out_linear_out[0:encoder_len, :] = out_linear_out_prefill
-        if kwargs["max_dec_len_this_time"]:  # decode phase
+        # if kwargs["max_dec_len_this_time"]:  # decode phase
+        if self.has_decoder:
             # ln_out_decoder = ln_out[encoder_len:, :]
             ln_out_decoder = ln_out
 
@@ -4520,6 +4522,9 @@ class FusedMultiTransformerXPU(Layer):
         )
         kwargs["max_enc_len_this_time"] = max_enc_len_this_time
         kwargs["max_dec_len_this_time"] = max_dec_len_this_time
+
+        self.has_encoder = (kwargs["max_enc_len_this_time"] > 0).cpu()
+        self.has_decoder = (kwargs["max_dec_len_this_time"] > 0).cpu()
 
         if self.config.append_attn:
 

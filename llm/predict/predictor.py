@@ -1325,7 +1325,9 @@ class StaticGraphBlockInferencePredictor(BlockInferencePredictorMixin):
         if self.tensor_parallel_rank == 0:
             done_event.wait()
         s_time = time.time()
+        used_times = []
         while self.model_inputs["not_need_stop"]:
+            start_t = time.time()
             # whether speculative decoding
             if self.proposer is not None:
                 self.proposer.run(
@@ -1338,7 +1340,9 @@ class StaticGraphBlockInferencePredictor(BlockInferencePredictorMixin):
                 self.full_hidden_states = self.predictor.run(list(self.model_inputs.values()))[0]
             else:
                 self.predictor.run(list(self.model_inputs.values()))
+            used_times.append(time.time() - start_t)
         logger.info(f"running spend {time.time() - s_time}")
+        logger.info(f"time of each token is {used_times}")
 
         if self.tensor_parallel_rank == 0:
             outputs = []
